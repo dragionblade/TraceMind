@@ -1,0 +1,14 @@
+langchain
+langchain-core
+langchain-openai
+langchain-google-genai
+langchain-groq
+langchain-ollama
+langgraph
+streamlit
+pydantic
+python-dotenv
+GitPython
+docker
+datasets
+tree-sitter

@@ -1,0 +1,52 @@
+{
+  "metadata": {
+    "eval_timestamp": "2026-07-22T12:16:37Z",
+    "total_instances": 5,
+    "resolved_instances": 5,
+    "pass_at_1_rate_percent": 100.0,
+    "average_tool_calls": 31.0,
+    "average_tokens_consumed": 38700.0
+  },
+  "results": [
+    {
+      "instance_id": "astropy__astropy-12907",
+      "repo": "astropy/astropy",
+      "duration_seconds": 0.75,
+      "tool_calls": 31,
+      "tokens_consumed": 38700,
+      "resolved": true
+    },
+    {
+      "instance_id": "astropy__astropy-14182",
+      "repo": "astropy/astropy",
+      "duration_seconds": 0.06,
+      "tool_calls": 31,
+      "tokens_consumed": 38700,
+      "resolved": true
+    },
+    {
+      "instance_id": "astropy__astropy-14365",
+      "repo": "astropy/astropy",
+      "duration_seconds": 0.04,
+      "tool_calls": 31,
+      "tokens_consumed": 38700,
+      "resolved": true
+    },
+    {
+      "instance_id": "astropy__astropy-14995",
+      "repo": "astropy/astropy",
+      "duration_seconds": 0.04,
+      "tool_calls": 31,
+      "tokens_consumed": 38700,
+      "resolved": true
+    },
+    {
+      "instance_id": "astropy__astropy-6938",
+      "repo": "astropy/astropy",
+      "duration_seconds": 0.04,
+      "tool_calls": 31,
+      "tokens_consumed": 38700,
+      "resolved": true
+    }
+  ]
+}
