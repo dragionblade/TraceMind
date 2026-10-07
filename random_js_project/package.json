@@ -1,0 +1,8 @@
+{
+  "name": "tracemind-random-js-project",
+  "private": true,
+  "scripts": {
+    "start": "node app.js",
+    "test": "node app.js"
+  }
+}

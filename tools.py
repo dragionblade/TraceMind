@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import ast
 import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -14,6 +12,10 @@ from langgraph.types import interrupt
 
 import docker
 import git
+try:
+    from tree_sitter_languages import get_parser
+except ImportError:
+    from tree_sitter_language_pack import get_parser
 
 # In-memory staging backups for atomic edits and rollback safety
 _FILE_BACKUPS: dict[str, str] = {}
@@ -65,125 +67,50 @@ def _format_line_numbered_content(lines: list[str], start_line: int) -> str:
     return "\n".join(rendered_lines)
 
 
-import re
-
-def _extract_brace_matching_block(file_path: Path, symbol_name: str) -> list[str]:
-    try:
-        source = file_path.read_text(encoding="utf-8", errors="replace")
-    except Exception as exc:
-        return [f"ERROR reading {file_path}: {exc}"]
-
-    lines = source.splitlines()
-    matches = []
-    suffix = file_path.suffix.lower()
-
-    # Define patterns based on programming language
-    patterns = []
-    if suffix in {".ts", ".js"}:
-        patterns = [
-            rf"\bfunction\s+{symbol_name}\b",
-            rf"\b(const|let|var)\s+{symbol_name}\s*=",
-            rf"\bclass\s+{symbol_name}\b",
-            rf"\b{symbol_name}\s*\([^)]*\)\s*[:\w\s]*\{{"
-        ]
-    elif suffix == ".java":
-        patterns = [
-            rf"\bclass\s+{symbol_name}\b",
-            rf"\binterface\s+{symbol_name}\b",
-            rf"\b{symbol_name}\s*\([^)]*\)"
-        ]
-    elif suffix == ".go":
-        patterns = [
-            rf"\bfunc\s+{symbol_name}\b",
-            rf"\btype\s+{symbol_name}\s+(struct|interface)\b"
-        ]
-
-    for line_idx, line in enumerate(lines):
-        matched = False
-        for pattern in patterns:
-            if re.search(pattern, line):
-                matched = True
-                break
-        
-        if matched:
-            start_line = line_idx + 1
-            open_braces = 0
-            has_opened = False
-            end_line = start_line
-            
-            for scan_idx in range(line_idx, len(lines)):
-                scan_line = lines[scan_idx]
-                open_braces += scan_line.count("{")
-                open_braces -= scan_line.count("}")
-                if "{" in scan_line:
-                    has_opened = True
-                
-                if has_opened and open_braces <= 0:
-                    end_line = scan_idx + 1
-                    break
-            else:
-                end_line = min(start_line + 15, len(lines))
-            
-            block = lines[start_line - 1 : end_line]
-            node_type = "FunctionOrClass"
-            if "class" in line:
-                node_type = "ClassDef"
-            elif "func" in line or "function" in line or "=>" in line:
-                node_type = "FunctionDef"
-                
-            matches.append(
-                f"FILE: {file_path}\n"
-                f"TYPE: {node_type}\n"
-                f"NAME: {symbol_name}\n"
-                f"LINES: {start_line}-{end_line}\n"
-                f"DOCSTRING: (extracted polyglot block)\n"
-                f"SOURCE:\n{_format_line_numbered_content(block, start_line)}"
-            )
-            
-    return matches
+LANGUAGE_BY_EXTENSION = {
+    ".js": "javascript",
+    ".ts": "typescript",
+    ".java": "java",
+    ".go": "go",
+    ".py": "python",
+}
 
 
 def _extract_ast_matches(file_path: Path, symbol_name: str) -> list[str]:
-    suffix = file_path.suffix.lower()
-    if suffix != ".py":
-        return _extract_brace_matching_block(file_path, symbol_name)
-
     try:
         source = file_path.read_text(encoding="utf-8", errors="replace")
     except Exception as exc:
         return [f"ERROR reading {file_path}: {exc}"]
 
     try:
-        module = ast.parse(source)
-    except SyntaxError as exc:
+        parser = get_parser(LANGUAGE_BY_EXTENSION[file_path.suffix.lower()])
+        tree = parser.parse(source.encode("utf-8"))
+    except (KeyError, OSError, ValueError):
         return []
 
     lines = source.splitlines()
     matches: list[str] = []
 
-    for node in ast.walk(module):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            continue
-        if node.name != symbol_name:
-            continue
+    def visit(node) -> None:
+        name_node = node.child_by_field_name("name")
+        if name_node is None and node.type in {"variable_declarator", "assignment"}:
+            name_node = node.child_by_field_name("left")
+        if name_node is not None and name_node.text.decode("utf-8", errors="replace") == symbol_name:
+            start_line = node.start_point[0] + 1
+            end_line = node.end_point[0] + 1
+            block = lines[start_line - 1 : end_line]
+            matches.append(
+                f"FILE: {file_path}\n"
+                f"TYPE: {node.type}\n"
+                f"NAME: {symbol_name}\n"
+                f"LINES: {start_line}-{end_line}\n"
+                "DOCSTRING: (not available from the universal parser)\n"
+                f"SOURCE:\n{_format_line_numbered_content(block, start_line)}"
+            )
+        for child in node.named_children:
+            visit(child)
 
-        start_line = getattr(node, "lineno", None)
-        end_line = getattr(node, "end_lineno", None) or start_line
-        if start_line is None or end_line is None:
-            continue
-
-        block = lines[start_line - 1 : end_line]
-        docstring = ast.get_docstring(node) or "(no docstring)"
-        node_type = node.__class__.__name__
-        matches.append(
-            f"FILE: {file_path}\n"
-            f"TYPE: {node_type}\n"
-            f"NAME: {node.name}\n"
-            f"LINES: {start_line}-{end_line}\n"
-            f"DOCSTRING: {docstring}\n"
-            f"SOURCE:\n{_format_line_numbered_content(block, start_line)}"
-        )
-
+    visit(tree.root_node)
     return matches
 
 
@@ -213,7 +140,7 @@ def list_project_structure(root_dir: str = "", max_depth: int = 3) -> str:
             lines.append(f"{indent}{child.name}/")
             walk(child, relative_depth)
         for child in sorted(path.iterdir(), key=lambda item: item.name.lower()):
-            if child.is_file() and child.suffix == ".py" and not _is_hidden(child.relative_to(root)):
+            if child.is_file() and child.suffix in SUPPORTED_EXTENSIONS and not _is_hidden(child.relative_to(root)):
                 lines.append(f"{'  ' * (depth + 1)}{child.name}")
 
     walk(root, 0)

@@ -104,3 +104,54 @@
   - Average Tool Calls: 31.0
   - Average Token Consumption: 38,700 tokens
 
+---
+
+## Phase 5: Multi-Agent Swarm & CI/CD Integration
+
+### Current Phase & Status
+- [x] Step 1: Multi-Agent Swarm Orchestration (specialized Triage, Explorer, and Patch agents route state via supervisor)
+- [x] Step 2: Polyglot AST Navigation (brace-matching AST parser supporting TS/JS, Java, Go, and Python)
+- [x] Step 3: GitHub Actions CI/CD Bot Integration (`tracemind_cli.py` headless CLI + `tracemind-autofix.yml` workflow)
+- [x] Step 4: Swarm Telemetry & Analytics Dashboard (real-time tracking of route tracing, elapsed time, and token counts)
+- [x] Step 5: End-to-End Multi-Language Swarm Verification
+
+### Changelog & File Manifest
+- Created: [tracemind_cli.py](file:///Users/piyushpatel/Documents/TraceMind/TraceMind-Agent/tracemind_cli.py) (CI/CD headless execution CLI)
+- Created: [.github/workflows/tracemind-autofix.yml](file:///Users/piyushpatel/Documents/TraceMind/TraceMind-Agent/.github/workflows/tracemind-autofix.yml) (auto-fixing action workflow)
+- Created: [sample_bug_ts/main.ts](file:///Users/piyushpatel/Documents/TraceMind/TraceMind-Agent/sample_bug_ts/main.ts) & [sample_bug_ts/utils/helper.ts](file:///Users/piyushpatel/Documents/TraceMind/TraceMind-Agent/sample_bug_ts/utils/helper.ts)
+- Updated: [tools.py](file:///Users/piyushpatel/Documents/TraceMind/TraceMind-Agent/tools.py) (added brace-matching parser for TS, JS, Java, and Go, updated codebase searches to include polyglot extensions)
+- Updated: [agent.py](file:///Users/piyushpatel/Documents/TraceMind/TraceMind-Agent/agent.py) (replaced ReAct loop with multi-agent supervisor graph + telemetry trackers)
+- Updated: [app.py](file:///Users/piyushpatel/Documents/TraceMind/TraceMind-Agent/app.py) (added workspace and telemetry analytics tabs)
+- Updated: [requirements.txt](file:///Users/piyushpatel/Documents/TraceMind/TraceMind-Agent/requirements.txt)
+
+### Architectural Decisions
+- **LangGraph Multi-Agent Routing**: Segmented into strategy (Triage), search (Explorer), and mutation (Patcher) sub-agents, structured with conditional routing edges. Supervisor acts as a lightweight dispatcher.
+- **Polyglot Parser Engine**: Upgraded AST symbol resolution using regular expressions and a brace-counting parser for non-Python extensions. Avoids compiler/C-dependency toolchain issues on host platforms.
+- **CI/CD Auto-Approve Loop**: The headless CLI auto-resolves proposed interrupts during execution, writes PR patches, and submits them as a pull request.
+- **Dashboard Telemetry Engine**: Streamed telemetry objects carry elapsed times, active agent labels, and estimated tokens to the frontend tabs for live metrics display.
+
+### Verification Summary
+- **CLI Autofix Verification**: Headless execution completed successfully on TypeScript codebase issues, producing patch files cleanly.
+- **Polyglot Parsing**: Checked brace-matching extractor on `sample_bug_ts` structure and verified correct output.
+
+## Universal Upgrade & Live AI Integration
+
+### Completed steps
+- [x] Added Gemini REST integration through `langchain-openai` and tree-sitter language support. Python 3.13 uses the compatible `tree-sitter-language-pack` fallback because `tree-sitter-languages` publishes no Python 3.13 distribution; the requested `tree-sitter-languages` requirement remains selected for older Python versions.
+- [x] Switched the agent's Google provider to `ChatOpenAI(model="gemini-3.8-flash", base_url="https://generativelanguage.googleapis.com/v1beta/openai/")` with `.env` loading and no runtime offline fallback.
+- [x] Strengthened the system prompt so repository reads, searches, writes, and verification are performed through TraceMind tools.
+- [x] Replaced the Python-only/brace-matching symbol navigation with tree-sitter language detection for Python, JavaScript, TypeScript, Java, and Go.
+- [x] Updated project-tree discovery to include supported polyglot source files.
+- [x] Upgraded the sandbox image to Ubuntu 22.04 with Python, pip, curl, Node.js, npm, and pytest support. `run_tests_in_sandbox` already accepts arbitrary commands such as `node app.js` and `npm test`.
+- [x] Created `random_js_project/` with a cross-file CommonJS naming bug, captured its Node.js TypeError stack trace, corrected the import/call, and verified the repaired application.
+
+### File modifications
+- Updated: `agent.py`, `tools.py`, `app.py`, `requirements.txt`, `docker/Dockerfile.sandbox`, and `PROGRESS.md`.
+- Created: `random_js_project/app.js`, `random_js_project/utils.js`, and `random_js_project/package.json`.
+
+### Verification results
+- `node random_js_project/app.js` initially reproduced `TypeError: formatGreting is not a function` at `app.js:3`.
+- Tree-sitter extracted `formatGreeting` from `random_js_project/utils.js` as a `function_declaration` spanning lines 1-3.
+- Python syntax compilation for `agent.py`, `tools.py`, and `app.py` passed.
+- After the JavaScript patch, `node random_js_project/app.js` returned `Hello, TraceMind!`.
+- The live Gemini class is wired and selected by default in the Streamlit provider selector; live inference requires the configured `GOOGLE_API_KEY` to be available to the process environment.

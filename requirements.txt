@@ -1,7 +1,6 @@
 langchain
 langchain-core
 langchain-openai
-langchain-google-genai
 langchain-groq
 langchain-ollama
 langgraph
@@ -12,3 +11,5 @@ GitPython
 docker
 datasets
 tree-sitter
+tree-sitter-languages; python_version < "3.13"
+tree-sitter-language-pack; python_version >= "3.13"

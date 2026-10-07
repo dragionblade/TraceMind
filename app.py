@@ -48,9 +48,9 @@ PROVIDER_OPTIONS = [
         "key_name": "OPENAI_API_KEY",
     },
     {
-        "label": "Google Gemini - gemini-1.5-flash",
+        "label": "Google Gemini - gemini-2.5-flash",
         "provider": "google",
-        "model": "gemini-1.5-flash",
+        "model": "gemini-2.5-flash",
         "key_name": "GOOGLE_API_KEY",
     },
     {
@@ -164,6 +164,10 @@ def _render_session_event(event: dict[str, Any]) -> dict[str, Any] | None:
 
     if event.get("event") == "done":
         st.success(event.get("message", "TraceMind completed."))
+        return None
+
+    if event.get("event") == "error":
+        st.error(event.get("message", "Autonomous analysis failed."))
     return None
 
 
@@ -203,6 +207,13 @@ def _run_session(
                 status_box.write("Patch rejected; agent should re-plan.")
             elif event.get("event") == "done":
                 status_box.write(event.get("message", "TraceMind completed."))
+                pending_action = None
+            elif event.get("event") == "error":
+                status_box.update(
+                    label="Autonomous debugging stopped",
+                    state="error",
+                    expanded=True,
+                )
                 pending_action = None
     return pending_action
 
@@ -432,7 +443,11 @@ if "telemetry_history" not in st.session_state:
 
 with st.sidebar:
     st.header("AI Provider & Model")
-    selected_label = st.selectbox("Select a provider", [option["label"] for option in PROVIDER_OPTIONS])
+    selected_label = st.selectbox(
+        "Select a provider",
+        [option["label"] for option in PROVIDER_OPTIONS],
+        index=1,
+    )
     selected_option = next(option for option in PROVIDER_OPTIONS if option["label"] == selected_label)
     st.caption(f"Expected key: {selected_option['key_name']}")
     st.caption(f"Model: {selected_option['model']}")
@@ -507,10 +522,14 @@ if start_analysis:
             stack_trace = sandbox_output
             
     st.session_state.last_stack_trace = stack_trace
-    
+    session_provider = (
+        "offline-demo"
+        if execution_mode == "Local Demo Mode"
+        else selected_option["provider"]
+    )
     st.session_state.pending_action = _run_session(
         stack_trace,
-        selected_option["provider"],
+        session_provider,
         selected_option["model"],
         st.session_state.thread_id,
     )
@@ -519,7 +538,11 @@ if st.session_state.pending_action:
     with tab_workspace:
         _render_approval_card(
             st.session_state.pending_action,
-            selected_option["provider"],
+            (
+                "offline-demo"
+                if execution_mode == "Local Demo Mode"
+                else selected_option["provider"]
+            ),
             selected_option["model"],
             st.session_state.thread_id,
             stack_trace,

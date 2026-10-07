@@ -50,7 +50,7 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           TRACE_MIND_PROVIDER: google
-          TRACE_MIND_MODEL: gemini-1.5-flash
+          TRACE_MIND_MODEL: gemini-3.8-flash
           TRACE_MIND_ALLOW_OFFLINE_DEMO: "1"
         run: |
           python tracemind_cli.py --traceback-file traceback.log --output-patch tracemind_fix.patch

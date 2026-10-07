@@ -35,7 +35,7 @@ from tools import (
 
 load_dotenv()
 
-SYSTEM_PROMPT = """You are TraceMind, an autonomous cross-file Python debugging agent.
+SYSTEM_PROMPT = """You are TraceMind, an autonomous cross-file polyglot debugging agent.
 
 Follow this strict ReAct operational workflow:
 1. Always start by calling list_project_structure to understand the repository layout.
@@ -49,12 +49,14 @@ Follow this strict ReAct operational workflow:
 9. Summarize the root cause, modifications, and testing results in your final response.
 
 Rules:
+- You must use the provided filesystem tools for every repository read, search, and write. Never use model memory, guessed content, or direct filesystem access as a substitute.
 - Never guess or assume file contents without inspecting actual source code.
 - Stay grounded in tool observations and do not invent file contents, imports, or runtime state.
+- Select the verification command for the repository language (for example, `node app.js`, `npm test`, `pytest`, `go test`, or a Java build command), and run it through run_tests_in_sandbox.
 """
 
 SUPPORTED_PROVIDERS = {"openai", "google", "groq", "github", "ollama"}
-ALLOW_OFFLINE_DEMO = os.getenv("TRACE_MIND_ALLOW_OFFLINE_DEMO", "1").strip() not in {"0", "false", "False"}
+OFFLINE_DEMO_PROVIDER = "offline-demo"
 PROJECT_ROOT = Path(__file__).resolve().parent
 CHECKPOINTER = MemorySaver()
 
@@ -87,14 +89,15 @@ def _build_llm(provider: str | None = None, model_name: str | None = None):
         raise RuntimeError(f"Missing required environment variable: {api_key_name}")
 
     if provider == "google":
-        try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-        except ImportError as exc:
-            raise RuntimeError(
-                "Google provider selected, but langchain-google-genai is not installed."
-            ) from exc
-
-        return ChatGoogleGenerativeAI(model=model_name, temperature=0)
+        return ChatOpenAI(
+            model=model_name,
+            api_key=os.environ.get("GOOGLE_API_KEY"),
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            temperature=0,
+            use_responses_api=False,
+            request_timeout=60,
+            max_retries=0,
+        )
 
     base_url_map = {
         "openai": os.getenv("TRACE_MIND_BASE_URL", ""),
@@ -115,6 +118,8 @@ def _build_llm(provider: str | None = None, model_name: str | None = None):
         temperature=0,
         api_key=api_key_map[provider],
         base_url=base_url,
+        request_timeout=60,
+        max_retries=0,
     )
 
 
@@ -380,10 +385,6 @@ def _run_offline_demo_session(
 
 @lru_cache(maxsize=8)
 def _build_tracemind_agent(provider: str, model_name: str):
-    api_key_name = _required_api_key_name(provider)
-    if ALLOW_OFFLINE_DEMO and (not api_key_name or not os.getenv(api_key_name)):
-        return None
-
     llm = _build_llm(provider=provider, model_name=model_name)
 
     # 1. Triage Agent Node
@@ -393,7 +394,7 @@ def _build_tracemind_agent(provider: str, model_name: str):
             "Analyze the stack trace input, locate the failing file, and write a strategy plan for the Code Explorer sub-agent.\n"
             "Response must outline the suspected files to inspect and the plan."
         )
-        messages = [SystemMessage(content=triage_prompt)] + state["messages"]
+        messages = [SystemMessage(content=SYSTEM_PROMPT + "\n\n" + triage_prompt)] + state["messages"]
         response = llm.invoke(messages)
         response.content = f"### [Triage Agent Strategy Plan]\n{response.content}"
         return {"messages": [response]}
@@ -408,7 +409,7 @@ def _build_tracemind_agent(provider: str, model_name: str):
     explorer_agent = create_react_agent(
         model=llm,
         tools=[list_project_structure, view_file_contents, get_function_or_class_definition, search_code_in_project],
-        prompt=SystemMessage(content=explorer_prompt)
+        prompt=SystemMessage(content=SYSTEM_PROMPT + "\n\n" + explorer_prompt)
     )
     def explorer_node(state):
         result = explorer_agent.invoke(state)
@@ -426,7 +427,7 @@ def _build_tracemind_agent(provider: str, model_name: str):
     patcher_agent = create_react_agent(
         model=llm,
         tools=[create_git_branch, apply_code_patch, run_tests_in_sandbox, commit_patch, generate_pr_summary],
-        prompt=SystemMessage(content=patcher_prompt)
+        prompt=SystemMessage(content=SYSTEM_PROMPT + "\n\n" + patcher_prompt)
     )
     def patcher_node(state):
         result = patcher_agent.invoke(state)
@@ -545,37 +546,39 @@ def run_debugging_session(
     provider = (provider or os.getenv("TRACE_MIND_PROVIDER", "openai")).strip().lower()
     model_name = (model_name or os.getenv("TRACE_MIND_MODEL", "gpt-4o-mini")).strip()
     thread_id = thread_id or str(uuid.uuid4())
-    tracemind_agent = _build_tracemind_agent(provider, model_name)
-    
-    start_time = time.time()
-    
-    if tracemind_agent is None:
-        # Simulate active sub-agents in offline fallback
-        for event in _run_offline_demo_session(
+    if provider == OFFLINE_DEMO_PROVIDER:
+        yield from _run_offline_demo_session(
             stack_trace_input,
             command=command,
             pending_action_override=pending_action_override,
-        ):
-            elapsed_time = round(time.time() - start_time, 2)
-            step = event.get("step", 0)
-            active_agent = "Supervisor"
-            if step == 0:
-                active_agent = "Triage Agent"
-            elif step in {1, 2, 3, 4}:
-                active_agent = "Code Explorer"
-            elif step in {5, 6}:
-                active_agent = "Patch & Verification"
-                
-            event["telemetry"] = {
-                "elapsed_time": elapsed_time,
-                "active_agent": active_agent,
-                "step_count": step,
-                "estimated_tokens": step * 1250 + 800
-            }
-            yield event
+        )
         return
 
-    config = {"configurable": {"thread_id": thread_id}}
+    start_time = time.time()
+    try:
+        tracemind_agent = _build_tracemind_agent(provider, model_name)
+    except Exception as exc:
+        yield {
+            "step": 0,
+            "event": "error",
+            "provider": provider,
+            "model": model_name,
+            "thread_id": thread_id,
+            "message": f"Unable to start autonomous analysis: {type(exc).__name__}: {exc}",
+            "messages": [],
+            "telemetry": {
+                "elapsed_time": 0.0,
+                "active_agent": "Error",
+                "step_count": 0,
+                "estimated_tokens": 0,
+            },
+        }
+        return
+    
+    config = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": 30,
+    }
     input_payload: Any = command if command is not None else {"messages": [HumanMessage(content=stack_trace_input)]}
     yield {
         "step": 0,
@@ -593,33 +596,58 @@ def run_debugging_session(
 
     latest_messages: list[BaseMessage] = []
     interrupted = False
-    for step_index, snapshot in enumerate(tracemind_agent.stream(input_payload, config=config, stream_mode="values"), start=1):
-        if isinstance(snapshot, dict) and "__interrupt__" in snapshot:
-            interrupted = True
-            break
+    try:
+        for step_index, snapshot in enumerate(
+            tracemind_agent.stream(input_payload, config=config, stream_mode="values"),
+            start=1,
+        ):
+            if isinstance(snapshot, dict) and "__interrupt__" in snapshot:
+                interrupted = True
+                break
 
-        messages = snapshot.get("messages", []) if isinstance(snapshot, dict) else []
-        if messages:
-            latest_messages = list(messages)
-            
+            messages = snapshot.get("messages", []) if isinstance(snapshot, dict) else []
+            if messages:
+                latest_messages = list(messages)
+
+            elapsed_time = round(time.time() - start_time, 2)
+            active_agent = "Supervisor"
+            messages_summarized = [_summarize_message(message) for message in messages]
+            if messages_summarized:
+                active_agent = _detect_active_agent(messages_summarized[-1])
+
+            yield {
+                "step": step_index,
+                "event": "state",
+                "message_count": len(messages),
+                "messages": messages_summarized,
+                "telemetry": {
+                    "elapsed_time": elapsed_time,
+                    "active_agent": active_agent,
+                    "step_count": step_index,
+                    "estimated_tokens": step_index * 1250 + 800
+                }
+            }
+    except Exception as exc:
         elapsed_time = round(time.time() - start_time, 2)
-        active_agent = "Supervisor"
-        messages_summarized = [_summarize_message(message) for message in messages]
-        if messages_summarized:
-            active_agent = _detect_active_agent(messages_summarized[-1])
-            
         yield {
-            "step": step_index,
-            "event": "state",
-            "message_count": len(messages),
-            "messages": messages_summarized,
+            "step": max(1, len(latest_messages)),
+            "event": "error",
+            "provider": provider,
+            "model": model_name,
+            "thread_id": thread_id,
+            "message": (
+                f"Autonomous analysis stopped after {elapsed_time}s: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+            "messages": [_summarize_message(message) for message in latest_messages],
             "telemetry": {
                 "elapsed_time": elapsed_time,
-                "active_agent": active_agent,
-                "step_count": step_index,
-                "estimated_tokens": step_index * 1250 + 800
+                "active_agent": "Error",
+                "step_count": max(1, len(latest_messages)),
+                "estimated_tokens": max(1, len(latest_messages)) * 1250 + 800
             }
         }
+        return
 
     if interrupted:
         pending_tool_call: dict[str, Any] | None = None
@@ -644,4 +672,3 @@ def run_debugging_session(
                 "estimated_tokens": max(1, len(latest_messages)) * 1250 + 800
             }
         }
-
